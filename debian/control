@@ -1,0 +1,40 @@
+Source: dahdi-tools
+Priority: optional
+Maintainer: Arvind Singh <arvind@buzzworks.com>
+Build-Depends: debhelper (>= 9), autotools-dev, dahdi-linux
+Standards-Version: 3.9.4
+Section: comm
+Homepage: http://www.asterisk.org
+Vcs-Git: git://github.com/buzzworks/dahdi-tools.git
+Vcs-Browser: http://github.com/buzzworks/dahdi-tools
+
+Package: dahdi
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, ${perl:Depends}, procps, fxload, dahdi-linux, dahdi-dkms
+Conflicts: zaptel
+Replaces: zaptel
+Description: utilities for using the DAHDI kernel modules
+ DAHDI (formly Zaptel) is an interface for telephony devices used by e.g. 
+ the Asterisk PBX software. The dahdi-* packages provide the kernel 
+ DAHDI kernel modules and their required setup environment.
+ .
+ This package includes userspace utilities required to configure DAHDI 
+ modules.
+
+Package: libtonezone-dev
+Section: libdevel
+Architecture: any
+Depends: libtonezone2.0 (= ${binary:Version}), ${misc:Depends}
+Description: tonezone library (development)
+ A library for generating tones to be sent through the DAHDI telephony
+ interface.
+ .
+ This package contains the development files.
+
+Package: libtonezone2.0
+Section: libs
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: tonezone library (runtime)
+ A library for generating tones to be sent through the DAHDI telephony
+ interface.

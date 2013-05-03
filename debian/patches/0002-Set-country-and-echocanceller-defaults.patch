@@ -1,0 +1,30 @@
+From: Arvind Singh <arvind@buzzworks.com>
+Date: Sat, 4 May 2013 15:43:30 +0530
+Subject: Set country and echocanceller defaults
+
+---
+ xpp/perl_modules/Dahdi/Config/Params.pm | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/xpp/perl_modules/Dahdi/Config/Params.pm b/xpp/perl_modules/Dahdi/Config/Params.pm
+index 0cc0d88..8c38f55 100644
+--- a/xpp/perl_modules/Dahdi/Config/Params.pm
++++ b/xpp/perl_modules/Dahdi/Config/Params.pm
+@@ -102,7 +102,7 @@ sub item($$@) {
+ 			fxs_default_start	=> 'ks',
+ 			fxo_default_start	=> 'ks',
+ 			em_signalling		=> 'none',
+-			lc_country		=> 'us',
++			lc_country		=> 'in',
+ 			context_lines		=> 'from-pstn',
+ 			context_phones		=> 'from-internal',
+ 			context_input		=> 'astbank-input',
+@@ -111,7 +111,7 @@ sub item($$@) {
+ 			group_lines		=> '0',
+ 			brint_overlap		=> 'no',
+ 			bri_sig_style		=> 'bri_ptmp',
+-			echo_can		=> 'mg2',
++			echo_can		=> 'oslec',
+ 			bri_hardhdlc		=> 'auto',
+ 			pri_connection_type	=> 'PRI',
+ 			r2_idle_bits		=> '1101',
