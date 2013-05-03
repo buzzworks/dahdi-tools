@@ -1,0 +1,23 @@
+From: Arvind Singh <arvind@buzzworks.com>
+Date: Sat, 4 May 2013 16:32:52 +0530
+Subject: Fix compilation error
+
+---
+ xpp/oct612x/include/octdef.h | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/xpp/oct612x/include/octdef.h b/xpp/oct612x/include/octdef.h
+index a2da33d..7e534b7 100644
+--- a/xpp/oct612x/include/octdef.h
++++ b/xpp/oct612x/include/octdef.h
+@@ -39,6 +39,10 @@ $Octasic_Revision: 12 $
+ extern "C" {
+ #endif
+ 
++#ifndef __KERNEL__
++#include <stdio.h>
++#endif
++
+ /*****************************  INCLUDE FILES  *******************************/
+ 
+ /*--------------------------------------------------------------------------

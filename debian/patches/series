@@ -1,0 +1,4 @@
+0001-Fix-compilation-error.patch
+0002-Set-perl-installation-path-to-vendorlib.patch
+0003-Disable-software-echo-canceller-by-default.patch
+0004-Add-allo4xpp.ko-support.patch
