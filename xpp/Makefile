@@ -30,7 +30,7 @@ SBINDIR		= $(prefix)/sbin
 DATADIR		= $(datadir)/dahdi
 MANDIR		= $(mandir)/man8
 HOTPLUG_USB_DIR	= $(sysconfdir)/hotplug/usb
-PERLLIBDIR	:= $(shell eval `perl -V:sitelib`; echo "$$sitelib")
+PERLLIBDIR	:= $(shell eval `perl -V:vendorlib`; echo "$$vendorlib")
 PERL_DIRS	:= $(shell cd perl_modules; find * -name '[A-Z]*' -type d| xargs)
 PERL_MODS_PAT	:= *.pm $(PERL_DIRS:%=%/*.pm)
 PERL_MODS	:= $(shell cd perl_modules; echo $(PERL_MODS_PAT))
