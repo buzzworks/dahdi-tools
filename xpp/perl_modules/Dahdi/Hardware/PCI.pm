@@ -42,6 +42,11 @@ my %pci_ids = (
 	'd161:0205'		=> { DRIVER => 'wct4xxp', DESCRIPTION => 'Wildcard TE205P ' },
 	'd161:0210'		=> { DRIVER => 'wct4xxp', DESCRIPTION => 'Wildcard TE210P ' },
 	'd161:1820'		=> { DRIVER => 'wct4xxp', DESCRIPTION => 'Wildcard TE820 (5th Gen)' },
+	'1d21:1280'		=> { DRIVER => 'allo4xxp', DESCRIPTION => 'Allocard 2aCP8e (2nd Gen)' },
+	'1d21:1240'		=> { DRIVER => 'allo4xxp', DESCRIPTION => 'Allocard 2aCP4e (2nd Gen)' },
+	'1d21:1241'		=> { DRIVER => 'allo4xxp', DESCRIPTION => 'Allocard 2aCP4 (2nd Gen)' },
+	'1d21:1220'		=> { DRIVER => 'allo4xxp', DESCRIPTION => 'Allocard 2aCP2 (2nd Gen)' },
+	'1d21:1221'		=> { DRIVER => 'allo4xxp', DESCRIPTION => 'Allocard 2aCP2 (2nd Gen)' },
 
 	# from wctdm24xxp
 	'd161:2400'		=> { DRIVER => 'wctdm24xxp', DESCRIPTION => 'Wildcard TDM2400P' },
