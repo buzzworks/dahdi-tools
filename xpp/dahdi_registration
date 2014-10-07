@@ -19,11 +19,32 @@ use Dahdi::Xpp::Xpd;
 use Getopt::Std;
 
 sub usage {
-	die "Usage: $0 [-s sort_order] [on|off|1|0]\n";
+	die "Usage: $0 [-v] [-R] [-s sort_order] [on|off|1|0]\n";
+}
+
+sub check_param {
+	my $param = shift || die;
+	open(F, $param) || return '';
+	my $val = <F>;
+	close F;
+	chomp $val;
+	return $val;
 }
 
 my %opts;
-getopts('s:', \%opts) || usage;
+getopts('vRs:', \%opts) || usage;
+
+my $dahdi_autoreg = check_param('/sys/module/xpp/parameters/dahdi_autoreg') eq 'Y';
+my $auto_assign_spans = check_param('/sys/module/dahdi/parameters/auto_assign_spans') ne '0';
+my $assigned_spans_config = $ENV{'ASSIGNED_SPANS_CONF_FILE'} || '/etc/dahdi/assigned-spans.conf';
+my $span_types_config = $ENV{'SPAN_TYPES_CONF_FILE'} || '/etc/dahdi/span-types.conf';
+my $have_assigned_spans_config = -f $assigned_spans_config || 0;
+my $have_span_types_config = -f $span_types_config || 0;
+
+# Spans will be auto-assigned by default if either:
+# - Driver $auto_assign_spans them or
+# - Udev script see that we $have_span_types_config and it "add" them
+my $default_auto_assign = $auto_assign_spans || $have_assigned_spans_config;
 
 my $sorter;
 my $sort_order = $opts{'s'};
@@ -41,8 +62,10 @@ if(defined $sort_order) {
 
 @ARGV == 0 or @ARGV == 1 or usage;
 my $on = shift;
-my $verbose = 0;
+my $verbose = $opts{'v'};
 my $should_output = 1;
+
+#print "dahdi_autoreg=$dahdi_autoreg auto_assign_spans=$auto_assign_spans have_assigned_spans_config='$have_assigned_spans_config' have_span_types_config='$have_span_types_config'\n";
 
 if(defined($on)) {	# Translate to booleans
 	$on = uc($on);
@@ -59,26 +82,41 @@ sub myprintf {
 	printf @_ if $should_output;
 }
 
-my @spans = Dahdi::spans;
-
 foreach my $xbus (Dahdi::Xpp::xbuses($sorter)) {
-	myprintf "%-10s\t%3s-%s\t%s\n",
-		$xbus->name, $xbus->xpporder, $xbus->label, $xbus->connector;
+	my $prev = $xbus->dahdi_registration($on);
+	if(!defined($prev)) {			# Failure
+		printf STDERR "%s: Failed %s\n", $xbus->name, $!;
+		next;
+	}
+	my $reg_str;
+	if (defined $on) {
+		$reg_str = ($on) ? "registering" : "unregistering";
+	} else {
+		$reg_str = ($prev) ? "registered" : "unregistered";
+	}
+	myprintf "%-10s\t%3s-%s\t%s (%s)\n",
+		$xbus->name, $xbus->xpporder, $xbus->label, $xbus->connector,
+		$reg_str;
 	next unless $xbus->status eq 'CONNECTED';
+	# Only assign if no default assignment, or forced by '-R' option
+	if (defined($on) && $on) {
+		if ($opts{'R'} || ! $default_auto_assign) {
+			# Emulate /etc/dahdi/assigned-spans.conf:
+			#   - We iterate over $xbus according to /etc/dahdi/xpp_order
+			#   - We "auto" assign all spans of current $xbus
+			my $devpath = sprintf "/sys/bus/dahdi_devices/devices/astribanks:xbus-%02d", $xbus->num;
+			my @cmd = ('dahdi_span_assignments', 'auto', $devpath);
+			system @cmd;
+			warn "Failed '@cmd' (status=$?)\n" if $?;
+		}
+		# wait for UDEV to do its stuff
+		system "dahdi_waitfor_span_assignments assigned";
+	}
 	foreach my $xpd (Dahdi::Xpp::Xpd::telephony_devs($xbus->xpds())) {
-		my $prev = $xpd->dahdi_registration($on);
-		if(!defined($prev)) {			# Failure
-			printf "%s: Failed %s\n", $xpd->fqn, $!;
-			next;
-		}
+		my $spanno = $xpd->xpd_getattr('span');
 		myprintf "\t%-10s: ", $xpd->fqn;
-		if(!defined($on)) {			# Query only
-			my ($span) = grep { $_->name eq $xpd->fqn } @spans;
-			my $spanstr = ($span) ? ("Span " . $span->num) : "";
-			myprintf "%s %s\n", state2str($prev), $spanstr ;
-			next;
-		}
-		myprintf "%3s ==> %3s\n", state2str($prev), state2str($on);
+		my $spanstr = ($spanno) ? ("Span " . $spanno) : "unassigned";
+		myprintf "%s\n", $spanstr ;
 	}
 }
 myprintf "# Sorted: $sort_order\n" if defined $sort_order;
@@ -91,7 +129,7 @@ dahdi_registration - Handle registration of Xorcom XPD modules in dahdi.
 
 =head1 SYNOPSIS
 
-dahdi_registration [-s sortorder] [on|off]
+dahdi_registration [-v] [-s sortorder] [-R] [on|off]
 
 =head1 DESCRIPTION
 
@@ -105,6 +143,13 @@ Span registration should generally always succeed. Span unregistration may
 fail if channels from the span are in use by e.g. asterisk. In such a case
 you'll also see those channels as '(In use)' in the output of lsdahdi(8).
 
+dahdi_registration is intended to be used when the kernel module parameter
+B<xpp.dahdi_autoreg> is false (and implicitly: when the module parameter
+B<dahdi.auto_assign_span> is true). See also the NOTES section regarding
+C<dahdi_span_assignments>.
+
+If dahdi_autoreg is true, the program will normally do nothing.
+
 =head2 Parameters
 
 off -- deregisters all XPD's from dahdi.
@@ -114,6 +159,15 @@ on -- registers all XPD's to dahdi.
 =head2 Options
 
 =over
+
+=item -v
+
+verbose output.
+
+=item -R
+
+Force operations (on/off) even if the module parameter B<dahdi_autoreg>
+for xpp is enabled (which makes this program unneeded).
 
 =item -s I<sort_order>
 
@@ -165,3 +219,30 @@ This should allow you to register / unregister a specific XPD rather
 than all of them. 
 
 =back
+
+=head1 NOTES
+
+dahdi_registration is intended to be used when the kernel module
+parameter B<xpp.dahdi_autoreg> is false (and implicitly: when the module
+parameter B<dahdi.auto_assign_span> is true), that is, Astribank devices
+as detected by XPP (xbus / xpd) do not register automatically with the
+DAHDI core. This tool is used to register tem in an explicit order. It
+works well, but only if you can arange for all of the Astribanks of the
+system to be available (and not already registered) at a specific point
+in time.
+
+Newer versions of DAHDI added support for registering a span to a
+specific span/channelss numbers specification. This allows registering
+them out of order. To use this capability, the module parameter
+B<dahdi.auto_assign_span> should be unset (set to 0) and thus spans of
+detected DAHDI devices could be registered using C<dahdi_span_assignments>
+(which may also be run automatically from a udev hook).
+
+In this case there is no point in delaying XPP device registration with
+dahdi and the parameter B<xpp.dahdi_autoreg> should be set.
+dahdi_registration will simply become a no-op.
+
+=head1 SEE ALSO
+
+B<dahdi_cfg>(8), B<dahdi_span_assignments>(8).
+

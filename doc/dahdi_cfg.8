@@ -4,7 +4,7 @@
 dahdi_cfg \- configures DAHDI kernel modules from /etc/dahdi/system.conf
 .SH SYNOPSIS
 
-.B dahdi_cfg [\-c \fICFG_FILE\fB] [\-S\fINUM\fB [-S\fICHANS\fB]] [\-s] [\-f] [\-t] [\-v [\-v ... ] ]
+.B dahdi_cfg [\-c \fICFG_FILE\fB] [\-S\fINUM\fB [\-S\fICHANS\fB]] [\-s] [\-f] [\-t] [\-v [\-v ... ] ]
 
 .B dahdi_cfg \-h
 
@@ -24,6 +24,8 @@ the DAHDI init script.
 .RS
 Use an alternative configuration file instead of
 .I /etc/dahdi/system.conf
+
+If \fICFG_FILE\fR is '\fB\-\fR', it is read from stdin.
 .RE
 
 .B \-C \fICHANNELS

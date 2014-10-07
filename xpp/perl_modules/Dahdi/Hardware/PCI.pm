@@ -93,6 +93,20 @@ my %pci_ids = (
 	'd161:8000'		=> { DRIVER => 'wcte12xp', DESCRIPTION => 'Wildcard TE121' },
 	'd161:8001'		=> { DRIVER => 'wcte12xp', DESCRIPTION => 'Wildcard TE122' },
 
+	# from wcte13xp
+	'd161:800a'		=> { DRIVER => 'wcte13xp', DESCRIPTION => 'Wildcard TE131/TE133' },
+	'd161:800b'		=> { DRIVER => 'wcte13xp', DESCRIPTION => 'Wildcard TE132/TE134' },
+
+	# from wcaxx
+	'd161:800c'		=> { DRIVER => 'wcaxx', DESCRIPTION => 'Digium A8A' },
+	'd161:800d'		=> { DRIVER => 'wcaxx', DESCRIPTION => 'Digium A8B' },
+	'd161:800f'		=> { DRIVER => 'wcaxx', DESCRIPTION => 'Digium A4A' },
+	'd161:8010'		=> { DRIVER => 'wcaxx', DESCRIPTION => 'Digium A4B' },
+
+	# from wcte435/235
+	'd161:800e'		=> { DRIVER => 'wcte43x', DESCRIPTION => 'Wildcard TE435/235' },
+	'd161:8013'		=> { DRIVER => 'wcte43x', DESCRIPTION => 'Wildcard TE436/236' },
+
 	# from wcb4xxp
 	'd161:b410'		=> { DRIVER => 'wcb4xxp', DESCRIPTION => 'Digium Wildcard B410P' },
 

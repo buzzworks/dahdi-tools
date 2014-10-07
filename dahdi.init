@@ -148,11 +148,6 @@ xpp_startup() {
 	if ! /usr/share/dahdi/waitfor_xpds; then return 0; fi
 
 	hotplug_exit_after_load
-
-	# overriding locales for the above two, as perl can be noisy
-	# when locales are missing.
-	# No register all the devices if they didn't auto-register:
-	LC_ALL=C dahdi_registration on
 }
 
 
@@ -227,13 +222,13 @@ load_modules() {
 	echo ""
 }
 
+# Make sure that either dahdi is loaded or modprobe-able
+dahdi_modules_loadable() {
+	modinfo dahdi >/dev/null 2>&1 || lsmod | grep -q -w ^dahdi
+}
+
 if [ ! -x "$DAHDI_CFG" ]; then
        echo "dahdi_cfg not executable"
-       exit 0
-fi
-
-if [ ! -f /etc/dahdi/system.conf ]; then
-	echo "/etc/dahdi/system.conf not found. Nothing to do."
        exit 0
 fi
 
@@ -242,6 +237,10 @@ RETVAL=0
 # See how we were called.
 case "$1" in
   start)
+	if ! dahdi_modules_loadable; then
+		echo "No DAHDI modules on the system. Not starting"
+		exit 0
+	fi
   	if hotplug_should_load_modules; then
 		load_modules
 	fi
@@ -258,6 +257,9 @@ case "$1" in
 	done
 
 	xpp_startup
+
+	# Assign all spans that weren't handled via udev + /etc/dahdi/assigned-spans.conf
+	/usr/share/dahdi/dahdi_auto_assign_compat
 
 	if [ $system = debian ]; then
 	    echo -n "Running dahdi_cfg: "
@@ -277,8 +279,12 @@ case "$1" in
 		$FXOTUNE -s || :
 	fi
 
-	# Set the right Astribanks ticker:
-	LC_ALL=C xpp_sync "$XPP_SYNC"
+	# Do not try to call xpp_sync if there are no Astribank devices
+	# installed.
+	if test -e /sys/bus/astribanks; then 
+		# Set the right Astribanks ticker:
+		LC_ALL=C xpp_sync "$XPP_SYNC"
+	fi
 
 	hpec_start
 	;;

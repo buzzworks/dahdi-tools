@@ -59,11 +59,18 @@ struct tone_zone builtin_zones[] =
 	  .description = "Australia",
 	  .ringcadence = {  400, 200, 400, 2000 },
 	  .tones = {
-			{ DAHDI_TONE_DIALTONE, "413+438" },
+				  
+			{ DAHDI_TONE_DIALTONE, "415+440" },
 			{ DAHDI_TONE_BUSY, "425/375,0/375" },
 			{ DAHDI_TONE_RINGTONE, "413+438/400,0/200,413+438/400,0/2000" },
-			/* XXX Congestion: Should reduce by 10 db every other cadence XXX */
-			{ DAHDI_TONE_CONGESTION, "425/375,0/375,420/375,0/375" },
+			/* The Australian congestion tone is 425Hz, 375ms On, 375ms Off, with the
+			 * second cadence being half the amplitude of the first; so the first cadence
+			 * is approximately -10dB with the second one being -20dB.  Using the update
+			 * ToneZone.c file, this can be accomplished by adding the "@" symbol in front
+			 * of the frequency to reduce amplification, as in the following entry for
+			 * Congestion:
+			 */
+			{ DAHDI_TONE_CONGESTION, "425/375,0/375,425@/375,0/375" },
 			{ DAHDI_TONE_CALLWAIT, "425/100,0/200,425/200,0/4400" },
 			{ DAHDI_TONE_DIALRECALL, "413+428" },
 			{ DAHDI_TONE_RECORDTONE, "!425/1000,!0/15000,425/360,0/15000" },
@@ -928,6 +935,8 @@ struct tone_zone builtin_zones[] =
 			{ DAHDI_TONE_RECORDTONE, "1400/400,0/15000" },
 			{ DAHDI_TONE_INFO, "950/330,1440/330,1800/330,0/1000" },
 			{ DAHDI_TONE_STUTTER, "!425/100,!0/100,!425/100,!0/100,!425/100,!0/100,!425/100,!0/100,!425/100,!0/100,!425/100,!0/100,425" },
+			/* DIALRECALL - not specified */
+			{ DAHDI_TONE_DIALRECALL, "!350+440/100,!0/100,!350+440/100,!0/100,!350+440/100,!0/100,350+440" },
 		},
 	  .dtmf_high_level = -10,
 	  .dtmf_low_level = -10,
@@ -948,6 +957,8 @@ struct tone_zone builtin_zones[] =
 			/* This should actually be 950+1400+1800, but we only support 2 tones at a time */
 			{ DAHDI_TONE_INFO,       "!950+1400/300,!0/1000,!950+1400/300,!0/1000,!950+1400/1000,0" },
 			{ DAHDI_TONE_STUTTER,    "!450/100,!0/100,!450/100,!0/100,!450/100,!0/100,!450/100,!0/100,!450/100,!0/100,!450/100,!0/100,450" },
+			/* DIALRECALL - not specified */
+			{ DAHDI_TONE_DIALRECALL, "!350+440/100,!0/100,!350+440/100,!0/100,!350+440/100,!0/100,350+440" },
 		},
 		.dtmf_high_level = -10,
 		.dtmf_low_level = -10,
@@ -996,6 +1007,8 @@ struct tone_zone builtin_zones[] =
 			{ DAHDI_TONE_INFO, "950/333,1400/333,1800/333,0/1000" },
 			/* STUTTER TONE - not specified */
 			{ DAHDI_TONE_STUTTER, "!425/100,!0/100,!425/100,!0/100,!425/100,!0/100,!425/100,!0/100,!425/100,!0/100,!425/100,!0/100,425" },
+			/* DIALRECALL - not specified */
+			{ DAHDI_TONE_DIALRECALL, "!350+440/100,!0/100,!350+440/100,!0/100,!350+440/100,!0/100,350+440" },
 		},
 		.dtmf_high_level = -10,
 		.dtmf_low_level = -10,
@@ -1044,6 +1057,8 @@ struct tone_zone builtin_zones[] =
 			{ DAHDI_TONE_INFO, "950/330,1450/330,1850/330,0/1000" },
 			/* STUTTER TONE */
 			{ DAHDI_TONE_STUTTER, "380+420" },
+			/* DIALRECALL - not specified */
+			{ DAHDI_TONE_DIALRECALL, "!350+440/100,!0/100,!350+440/100,!0/100,!350+440/100,!0/100,350+440" },
 		},
 		.dtmf_high_level = -10,
 		.dtmf_low_level = -10,

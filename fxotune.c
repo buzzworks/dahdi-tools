@@ -47,7 +47,6 @@ static float sintable[SINE_SAMPLES];
 
 static const float amplitude = 16384.0;
 
-static char *dahdipath = "/dev/dahdi";
 static char *configfile = "/etc/fxotune.conf";
 
 static int audio_dump_fd = -1;
@@ -913,6 +912,66 @@ retry:
 	return 0;
 }
 
+static int channel_is_fxo(int channo)
+{
+	int res = 0;
+	int fd;
+	const char *CTL_DEV = "/dev/dahdi/ctl";
+	struct dahdi_params params;
+
+	fd = open(CTL_DEV, O_RDWR, 0600);
+	if (-1 == fd) {
+		fprintf(stderr, "Failed to open %s: %s\n",
+			CTL_DEV, strerror(errno));
+		return -1;
+	}
+	params.channo = channo;
+	if (ioctl(fd, DAHDI_GET_PARAMS, &params)) {
+		fprintf(stderr,
+			"%d is not a valid channel number.\n", channo);
+		res = -1;
+	} else if (0 == (__DAHDI_SIG_FXS & params.sigcap)) {
+		fprintf(stderr,
+			"Channel %d is not an FXO port.\n", channo);
+		res = -1;
+	} else if (0 == params.sigtype) {
+		fprintf(stderr,
+			"Cannot run on unconfigured channel %d. Please run dahdi_cfg to configure channels before running fxotune.\n",
+			channo);
+		res = -1;
+	}
+	close(fd);
+	return res;
+}
+
+static int channel_open(int channo)
+{
+	int	fd;
+	const char *DEVICE = "/dev/dahdi/channel";
+
+	if (channo > 0) {
+		if (channel_is_fxo(channo))
+			return -1;
+
+		fd = open(DEVICE, O_RDWR, 0600);
+		if (fd < 0) {
+			perror(DEVICE);
+			return -1;
+		}
+
+		if (ioctl(fd, DAHDI_SPECIFY, &channo) < 0) {
+			perror("DADHI_SPECIFY ioctl failed");
+			close(fd);
+			fd = -1;
+		}
+	} else {
+		fprintf(stderr,
+			"Specified channel is not a valid channel number");
+		fd = -1;
+	}
+	return fd;
+}
+
 /**
  * Reads echo register settings from the configuration file and pushes them into
  * the appropriate devices
@@ -921,7 +980,7 @@ retry:
  * 
  * @return 0 if successful, !0 otherwise
  */	
-static int do_set(char *configfilename)
+static int do_set(char *configfilename, int dev_range, int startdev, int stopdev)
 {
 	FILE *fp = NULL;
 	int res = 0;
@@ -948,6 +1007,8 @@ static int do_set(char *configfilename)
 		if (res == EOF) {
 			break;
 		}
+		if (dev_range && (mydahdi < startdev || mydahdi > stopdev))
+			continue;
 
 		/* Check to be sure conversion is done correctly */
 		if (OUT_OF_BOUNDS(myacim) || OUT_OF_BOUNDS(mycoef1)||
@@ -969,11 +1030,10 @@ static int do_set(char *configfilename)
 		mycoefs.coef7 = mycoef7;
 		mycoefs.coef8 = mycoef8;
 	
-		snprintf(completedahdipath, sizeof(completedahdipath), "%s/%d", dahdipath, mydahdi);
-		fd = open(completedahdipath, O_RDWR);
-
+		if (debug >= 2)
+			printf("fxotune: set channel %d\n", mydahdi);
+		fd = channel_open(mydahdi);
 		if (fd < 0) {
-			fprintf(stdout, "open error on %s: %s\n", completedahdipath, strerror(errno));
 			return -1;
 		}
 
@@ -1014,11 +1074,8 @@ static int do_dump(int startdev, char* dialstr, int delayuntilsilence, int silen
 	char dahdidev[80] = "";
 	
 	int dahdimodule = startdev;
-	snprintf(dahdidev, sizeof(dahdidev), "%s/%d", dahdipath, dahdimodule);
-
-	fd = open(dahdidev, O_RDWR);
+	fd = channel_open(dahdimodule);
 	if (fd < 0) {
-		fprintf(stdout, "%s absent: %s\n", dahdidev, strerror(errno));
 		return -1;
 	}
 
@@ -1060,7 +1117,6 @@ static int do_calibrate(int startdev, int enddev, int calibtype, char* configfil
 	int res = 0;
 	int configfd, fd;
 	int devno = 0;
-	char dahdidev[80] = "";
 	struct wctdm_echo_coefs coefs;
 	
 	configfd = open(configfile, O_CREAT|O_TRUNC|O_WRONLY, 0666);
@@ -1071,15 +1127,12 @@ static int do_calibrate(int startdev, int enddev, int calibtype, char* configfil
 	}
 
 	for (devno = startdev; devno <= enddev; devno++) {
-		snprintf(dahdidev, sizeof(dahdidev), "%s/%d", dahdipath, devno);
-
-		fd = open(dahdidev, O_RDWR);
+		fd = channel_open(devno);
 		if (fd < 0) {
-			fprintf(stdout, "%s absent: %s\n", dahdidev, strerror(errno));
 			continue;
 		}
 
-		fprintf(stdout, "Tuning module %s\n", dahdidev);
+		fprintf(stdout, "Tuning module %d\n", devno);
 		
 		if (1 == calibtype)
 			res = acim_tune(fd, dialstr, delayuntilsilence, silencegoodfor, &coefs);
@@ -1138,6 +1191,7 @@ int main(int argc , char **argv)
 {
 	int startdev = 1; /* -b */
 	int stopdev = 252; /* -e */
+	int dev_range = 0; /* false */
 	int calibtype = 2; /* -t */
 	int waveformtype = -1; /* -w multi-tone by default.  If > 0, single tone of specified frequency */
 	int delaytosilence = 0; /* -l */
@@ -1179,9 +1233,11 @@ int main(int argc , char **argv)
 				continue;
 			case 'b':
 				startdev = moreargs ? atoi(argv[++i]) : startdev;
+				dev_range = 1;
 				break;
 			case 'e':
 				stopdev = moreargs ? atoi(argv[++i]) : stopdev;
+				dev_range = 1;
 				break;
 			case 't':
 				calibtype = moreargs ? atoi(argv[++i]) : calibtype;
@@ -1251,13 +1307,13 @@ int main(int argc , char **argv)
 	if (docalibrate){
 		res = do_calibrate(startdev, stopdev, calibtype, configfile, dialstr, delaytosilence, silencegoodfor);
 		if (!res)
-			return do_set(configfile);	
+			return do_set(configfile, dev_range, startdev, stopdev);
 		else
 			return -1;
 	}
 
 	if (doset)
-		return do_set(configfile);
+		return do_set(configfile, dev_range, startdev, stopdev);
 				
 	if (dodump){
 		res = do_dump(startdev, dialstr, delaytosilence, silencegoodfor, waveformtype);

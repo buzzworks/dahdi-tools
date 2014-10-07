@@ -5,19 +5,7 @@
 #
 #
 
-# If the file .dahdi.makeopts is present in your home directory, you can
-# include all of your favorite menuselect options so that every time you download
-# a new version of Asterisk, you don't have to run menuselect to set them.
-# The file /etc/dahdi.makeopts will also be included but can be overridden
-# by the file in your home directory.
-
-GLOBAL_MAKEOPTS=$(wildcard /etc/dahdi.makeopts)
-USER_MAKEOPTS=$(wildcard ~/.dahdi.makeopts)
-
 ifeq ($(strip $(foreach var,clean distclean dist-clean update,$(findstring $(var),$(MAKECMDGOALS)))),)
- ifneq ($(wildcard menuselect.makeopts),)
-  include menuselect.makeopts
- endif
 endif
 
 ifeq ($(strip $(foreach var,clean distclean dist-clean update,$(findstring $(var),$(MAKECMDGOALS)))),)
@@ -72,6 +60,8 @@ MODULES_FILE	= /etc/dahdi/modules
 GENCONF_FILE	= /etc/dahdi/genconf_parameters
 MODPROBE_FILE	= /etc/modprobe.d/dahdi.conf
 BLACKLIST_FILE	= /etc/modprobe.d/dahdi.blacklist.conf
+BASH_COMP_DIR	= /etc/bash_completion.d
+BASH_COMP_FILE	= $(BASH_COMP_DIR)/dahdi
 
 NETSCR_DIR	:= $(firstword $(wildcard $(DESTDIR)/etc/sysconfig/network-scripts ))
 ifneq (,$(NETSCR_DIR))
@@ -79,13 +69,7 @@ ifneq (,$(NETSCR_DIR))
   COPY_NETSCR	:= install -D ifup-hdlc $(NETSCR_TARGET)
 endif
 
-ifneq ($(wildcard .version),)
-  TOOLSVERSION:=$(shell cat .version)
-else
-ifneq ($(wildcard .svn),)
-  TOOLSVERSION=$(shell build_tools/make_version . dahdi/tools)
-endif
-endif
+TOOLSVERSION=$(shell build_tools/make_version . dahdi/tools)
 
 LTZ_A:=libtonezone.a
 LTZ_A_OBJS:=zonedata.o tonezone.o version.o
@@ -100,8 +84,10 @@ BIN_DIR:=$(sbindir)
 LIB_DIR:=$(libdir)
 INC_DIR:=$(includedir)/dahdi
 MAN_DIR:=$(mandir)/man8
+DATA_DIR:=${datadir}/dahdi
 CONFIG_DIR:=$(sysconfdir)/dahdi
 CONFIG_FILE:=$(CONFIG_DIR)/system.conf
+UDEVRULES_DIR:=$(sysconfdir)/udev/rules.d
 
 # Utilities we build with a standard build procedure:
 UTILS		= dahdi_tool dahdi_test dahdi_monitor dahdi_speed sethdlc dahdi_cfg \
@@ -111,9 +97,31 @@ UTILS		= dahdi_tool dahdi_test dahdi_monitor dahdi_speed sethdlc dahdi_cfg \
 UTILS		+= patgen pattest patlooptest hdlcstress hdlctest hdlcgen \
 		   hdlcverify timertest dahdi_maint
 
-BINS:=fxotune fxstest sethdlc dahdi_cfg dahdi_diag dahdi_monitor dahdi_speed dahdi_test dahdi_scan dahdi_tool dahdi_maint
-BINS:=$(filter-out $(MENUSELECT_UTILS),$(BINS))
-MAN_PAGES:=$(wildcard $(BINS:%=doc/%.8))
+
+BINS:=fxotune dahdi_cfg dahdi_monitor dahdi_speed dahdi_test dahdi_scan dahdi_maint
+ifeq	(1,$(PBX_NEWT))
+	BINS	+= dahdi_tool
+endif
+ifeq	(1,$(PBX_HDLC))
+	BINS	+= sethdlc
+endif
+ASSIGNED_DATA_SCRIPTS:=\
+	dahdi_handle_device	\
+	dahdi_span_config	\
+	dahdi_auto_assign_compat	\
+	span_config.d/10-dahdi-cfg	\
+	span_config.d/20-fxotune	\
+	span_config.d/50-asterisk	\
+	handle_device.d/10-span-types	\
+	handle_device.d/20-span-assignments
+
+ASSIGNED_UTILS:=dahdi_span_assignments dahdi_span_types \
+	dahdi_waitfor_span_assignments
+ASSIGNED_CONF:=assigned-spans.conf.sample span-types.conf.sample
+
+MAN_PAGES:= \
+	$(wildcard $(BINS:%=doc/%.8)) \
+	$(wildcard $(ASSIGNED_UTILS:%=doc/%.8))
 
 TEST_BINS:=patgen pattest patlooptest hdlcstress hdlctest hdlcgen hdlcverify timertest dahdi_maint
 # All the man pages. Not just installed ones:
@@ -122,10 +130,7 @@ GROFF_HTML	:= $(GROFF_PAGES:%=%.html)
 
 GENERATED_DOCS	:= $(GROFF_HTML) README.html README.Astribank.html
 
-all: menuselect.makeopts 
-	@$(MAKE) _all
-
-_all: prereq programs
+all: prereq programs
 
 libs: $(LTZ_SO) $(LTZ_A)
 
@@ -175,7 +180,7 @@ $(LTZ_SO): $(LTZ_SO_OBJS)
 	$(CC) $(CFLAGS) -shared -Wl,-soname,$(LTZ_SO).$(LTZ_SO_MAJOR_VER).$(LTZ_SO_MINOR_VER) -o $@ $^ -lm
 
 dahdi_cfg: $(LTZ_A)
-dahdi_cfg: LIBS+=-lm
+dahdi_cfg: LIBS+=-lm -lpthread
 dahdi_pcap:
 	$(CC) $(CFLAGS) dahdi_pcap.c -lpcap -o $@ $<
 	
@@ -201,13 +206,14 @@ genconf_parameters.sample: xpp/genconf_parameters
 	cp $< $@
 
 README.html: README system.conf.asciidoc init.conf.asciidoc tonezones.txt \
-  UPGRADE.txt genconf_parameters.asciidoc
-	$(ASCIIDOC) -n -a toc -a toclevels=3 $<
+  UPGRADE.txt genconf_parameters.asciidoc assigned-spans.conf.asciidoc \
+  span-types.conf.asciidoc
+	$(ASCIIDOC) -n -a toc -a toclevels=4 $<
 
 README.Astribank.html: xpp/README.Astribank
 	$(ASCIIDOC) -o $@ -n -a toc -a toclevels=4 $<
 
-# on Debian: this requires the full groof, not just groff-base.
+# on Debian: this requires the full groff, not just groff-base.
 %.8.html: %.8
 	man -Thtml $^ >$@
 
@@ -236,6 +242,12 @@ ifeq (,$(wildcard $(DESTDIR)$(CONFIG_FILE)))
 	$(INSTALL) -d $(DESTDIR)$(CONFIG_DIR)
 	$(INSTALL) -m 644 system.conf.sample $(DESTDIR)$(CONFIG_FILE)
 endif
+	install -d $(DESTDIR)$(DATA_DIR)
+	tar cf - -C hotplug $(ASSIGNED_DATA_SCRIPTS) | tar xf - -C $(DESTDIR)$(DATA_DIR)/
+	install $(ASSIGNED_UTILS) $(DESTDIR)/$(BIN_DIR)/
+	install -m 644 $(ASSIGNED_CONF) $(DESTDIR)/$(CONFIG_DIR)/
+	install -d $(DESTDIR)$(BASH_COMP_DIR)
+	install -m 644 dahdi-bash-completion $(DESTDIR)$(BASH_COMP_FILE)
 
 install-libs: libs
 	$(INSTALL) -d -m 755 $(DESTDIR)/$(LIB_DIR)
@@ -298,6 +310,8 @@ endif
 ifeq (,$(wildcard $(DESTDIR)$(BLACKLIST_FILE)))
 	$(INSTALL) -D -m 644 blacklist.sample $(DESTDIR)$(BLACKLIST_FILE)
 endif
+	$(INSTALL) -d $(DESTDIR)$(UDEVRULES_DIR)
+	$(INSTALL) -D -m 644 dahdi.rules $(DESTDIR)$(UDEVRULES_DIR)/
 ifneq (,$(COPY_NETSCR))
 	$(COPY_NETSCR)
 endif
@@ -332,8 +346,10 @@ update:
 		echo "Not under version control";  \
 	fi
 
+dist:
+	@./build_tools/make_dist "dahdi-tools" "$(TOOLSVERSION)"
+
 clean:
-	-@$(MAKE) -C menuselect clean
 	rm -f $(BINS) $(TEST_BINS)
 	rm -f *.o dahdi_cfg tzdriver sethdlc
 	rm -f $(LTZ_SO) $(LTZ_A) *.lo
@@ -353,8 +369,7 @@ clean:
 distclean: dist-clean
 
 dist-clean: clean
-	@$(MAKE) -C menuselect dist-clean
-	rm -f makeopts menuselect.makeopts menuselect-tree build_tools/menuselect-deps
+	rm -f makeopts
 	rm -f config.log config.status
 	rm -f .*.d
 
@@ -366,62 +381,7 @@ config.status: configure
 	@echo "****"
 	@exit 1
 
-menuselect.makeopts: menuselect/menuselect menuselect-tree makeopts
-	menuselect/menuselect --check-deps $@ $(GLOBAL_MAKEOPTS) $(USER_MAKEOPTS)
-
-menuconfig: menuselect
-
-cmenuconfig: cmenuselect
-
-gmenuconfig: gmenuselect
-
-nmenuconfig: nmenuselect
-
-menuselect: menuselect/cmenuselect menuselect/nmenuselect menuselect/gmenuselect
-	@if [ -x menuselect/nmenuselect ]; then \
-		$(MAKE) nmenuselect; \
-	elif [ -x menuselect/cmenuselect ]; then \
-		$(MAKE) cmenuselect; \
-	elif [ -x menuselect/gmenuselect ]; then \
-		$(MAKE) gmenuselect; \
-	else \
-		echo "No menuselect user interface found. Install ncurses,"; \
-		echo "newt or GTK libraries to build one and re-rerun"; \
-		echo "'make menuselect'."; \
-	fi
-
-cmenuselect: menuselect/cmenuselect menuselect-tree
-	-@menuselect/cmenuselect menuselect.makeopts $(GLOBAL_MAKEOPTS) $(USER_MAKEOPTS) && echo "menuselect changes saved!" || echo "menuselect changes NOT saved!"
-
-gmenuselect: menuselect/gmenuselect menuselect-tree
-	-@menuselect/gmenuselect menuselect.makeopts $(GLOBAL_MAKEOPTS) $(USER_MAKEOPTS) && echo "menuselect changes saved!" || echo "menuselect changes NOT saved!"
-
-nmenuselect: menuselect/nmenuselect menuselect-tree
-	-@menuselect/nmenuselect menuselect.makeopts $(GLOBAL_MAKEOPTS) $(USER_MAKEOPTS) && echo "menuselect changes saved!" || echo "menuselect changes NOT saved!"
-
-# options for make in menuselect/
-MAKE_MENUSELECT=CC="$(HOST_CC)" CXX="$(CXX)" LD="" AR="" RANLIB="" CFLAGS="" $(MAKE) -C menuselect CONFIGURE_SILENT="--silent"
-
-menuselect/menuselect: menuselect/makeopts
-	+$(MAKE_MENUSELECT) menuselect
-
-menuselect/cmenuselect: menuselect/makeopts
-	+$(MAKE_MENUSELECT) cmenuselect
-
-menuselect/gmenuselect: menuselect/makeopts
-	+$(MAKE_MENUSELECT) gmenuselect
-
-menuselect/nmenuselect: menuselect/makeopts
-	+$(MAKE_MENUSELECT) nmenuselect
-
-menuselect/makeopts: makeopts
-	+$(MAKE_MENUSELECT) makeopts
-
-menuselect-tree: dahdi.xml
-	@echo "Generating input for menuselect ..."
-	@build_tools/make_tree > $@
-
-.PHONY: menuselect distclean dist-clean clean all _all install programs tests devel data config update install-programs install-libs install-utils-subdirs utils-subdirs prereq
+.PHONY: distclean dist-clean clean all install programs tests devel data config update install-programs install-libs install-utils-subdirs utils-subdirs prereq dist
 
 FORCE:
 

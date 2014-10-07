@@ -29,13 +29,18 @@
 
 #include <stdio.h> 
 #include <getopt.h>
+#include <signal.h>
 #include <string.h>
 #include <stdarg.h>
 #include <stdlib.h>
 #include <unistd.h>
 #include <sys/ioctl.h>
 #include <fcntl.h>
+#include <sys/stat.h>
+#include <semaphore.h>
 #include <errno.h>
+#include <dirent.h>
+#include <stdbool.h>
 
 #include <dahdi/user.h>
 #include "tonezone.h"
@@ -104,7 +109,7 @@ static int fiftysixkhdlc[DAHDI_MAX_CHANNELS];
 
 static int spans=0;
 
-static int fo_real = 1;
+static int dry_run = 0;
 
 static int verbose = 0;
 
@@ -136,6 +141,97 @@ static const char *laws[] = {
 	"Mu-law",
 	"A-law"
 };
+
+static bool _are_all_spans_assigned(const char *device_path)
+{
+	char attribute[1024];
+	int res;
+	FILE *fp;
+	int span_count;
+	DIR *dirp;
+	struct dirent *dirent;
+
+	snprintf(attribute, sizeof(attribute) - 1,
+		 "%s/span_count", device_path);
+	fp = fopen(attribute, "r");
+	if (NULL == fp) {
+		fprintf(stderr, "Failed to open '%s'.\n", attribute);
+		return false;
+	}
+	res = fscanf(fp, "%d", &span_count);
+	fclose(fp);
+
+	if (EOF == res) {
+		fprintf(stderr, "Failed to read '%s'.\n", attribute);
+		return false;
+	}
+
+	dirp = opendir(device_path);
+	while (span_count) {
+		dirent = readdir(dirp);
+		if (NULL == dirent)
+			break;
+		if (!strncmp("span-", dirent->d_name, 5)) {
+			--span_count;
+		}
+	}
+	closedir(dirp);
+	return (span_count > 0) ? false : true;
+}
+
+/**
+ * are_all_spans_assigned - Look in sysfs to see if all spans for a device are assigned.
+ *
+ * Returns true if there are $span_count child spans of all devices, or false
+ *  otherwise.
+ */
+static bool are_all_spans_assigned(void)
+{
+	DIR *dirp;
+	struct dirent *dirent;
+	bool res = true;
+	char device_path[1024];
+
+	dirp = opendir("/sys/bus/dahdi_devices/devices");
+	if (!dirp) {
+		/* If we cannot open dahdi_devices, either dahdi isn't loaded,
+		 * or we're using an older version of DAHDI that doesn't use
+		 * sysfs. */
+		return true;
+	}
+
+	while (true && res) {
+
+		dirent = readdir(dirp);
+		if (NULL == dirent)
+			break;
+
+		if (!strcmp(dirent->d_name, ".") ||
+		    !strcmp(dirent->d_name, ".."))
+			continue;
+
+		snprintf(device_path, sizeof(device_path)-1,
+			 "/sys/bus/dahdi_devices/devices/%s", dirent->d_name);
+		res = _are_all_spans_assigned(device_path);
+	}
+
+	closedir(dirp);
+	errno = 0;
+	return res;
+}
+
+static bool wait_for_all_spans_assigned(unsigned long timeout_sec)
+{
+	bool all_assigned = are_all_spans_assigned();
+	unsigned int timeout = 10*timeout_sec;
+
+	while (!all_assigned && --timeout) {
+		usleep(100000);
+		all_assigned = are_all_spans_assigned();
+	}
+
+	return all_assigned;
+}
 
 static const char *sigtype_to_str(const int sig)
 {
@@ -666,7 +762,16 @@ static int chanconfig(char *keyword, char *args)
 			} else {
 				fprintf(stderr, "Huh? (%s)\n", keyword);
 			}
-			if (is_digital)
+
+			if (cc[x].sigtype != DAHDI_SIG_CAS &&
+			    cc[x].sigtype != DAHDI_SIG_DACS &&
+			    cc[x].sigtype != DAHDI_SIG_DACS_RBS) {
+				if (NULL != idle) {
+					fprintf(stderr, "WARNING: idlebits are not valid on %s channels.\n", sig[x]);
+				}
+			}
+
+			if (is_digital) 
 				chan2span[x] = current_span;
 			else
 				current_span = 0;
@@ -714,21 +819,22 @@ static int setfiftysixkhdlc(char *keyword, char *args)
 	return 0;
 }
 
-static void apply_fiftysix(void)
+static int apply_fiftysix(void)
 {
 	int x;
 	int rate;
 	int chanfd;
 
 	for (x = 1; x < DAHDI_MAX_CHANNELS; x++) {
-		if (skip_channel(x))
+		if (skip_channel(x) || !cc[x].sigtype)
 			continue;
+
 		chanfd = open("/dev/dahdi/channel", O_RDWR);
 		if (chanfd == -1) {
 			fprintf(stderr, 
 			    "Couldn't open /dev/dahdi/channel: %s\n", 
 			    strerror(errno));
-			exit(-1);
+			return -1;	
 		}
 
 		if (ioctl(chanfd, DAHDI_SPECIFY, &x)) {
@@ -749,6 +855,7 @@ static void apply_fiftysix(void)
 		}
 		close(chanfd);
 	}
+	return 0;
 }
 
 static int setechocan(char *keyword, char *args)
@@ -1271,7 +1378,7 @@ static void printconfig(int fd)
 	       "Configuration\n"
 	       "======================\n\n", vi.version, vi.echo_canceller);
 	for (x = 0; x < spans; x++) {
-		if (only_span && only_span != x)
+		if (only_span && only_span != lc[x].span)
 			continue;
 		printf("SPAN %d: %3s/%4s Build-out: %s\n",
 		       lc[x].span,
@@ -1444,12 +1551,27 @@ static int span_restrict(char *str)
 	return 1;
 }
 
+static const char *SEM_NAME = "dahdi_cfg";
+static sem_t *lock = SEM_FAILED;
+
+static void signal_handler(int signal)
+{
+	if (SEM_FAILED != lock) {
+		sem_unlink(SEM_NAME);
+	}
+	/* The default handler should have been restored before this handler was
+	 * called, so we can let the "normal" processing finish the cleanup. */
+	raise(signal);
+}
+
 int main(int argc, char *argv[])
 {
 	int c;
 	char *buf;
 	char *key, *value;
 	int x,found;
+	int exit_code = 0;
+	struct sigaction act;
 
 	while((c = getopt(argc, argv, "fthc:vsd::C:S:")) != -1) {
 		switch(c) {
@@ -1469,7 +1591,7 @@ int main(int argc, char *argv[])
 			force++;
 			break;
 		case 't':
-			fo_real = 0;
+			dry_run = 1;
 			break;
 		case 's':
 			stopmode = 1;
@@ -1495,12 +1617,24 @@ int main(int argc, char *argv[])
 		fprintf(stderr, "%s\n", dahdi_tools_version);
 	}
 
+	if (!restrict_channels && !only_span) {
+		bool all_assigned = wait_for_all_spans_assigned(5);
+
+		if (!all_assigned) {
+			fprintf(stderr,
+				"Timeout waiting for all spans to be assigned.\n");
+		}
+	}
+
 	if (fd == -1) fd = open(MASTER_DEVICE, O_RDWR);
 	if (fd < 0) {
 		error("Unable to open master device '%s'\n", MASTER_DEVICE);
 		goto finish;
 	}
-	cf = fopen(filename, "r");
+	if (strcmp(filename, "-") == 0)
+		cf = fdopen(STDIN_FILENO, "r");
+	else
+		cf = fopen(filename, "r");
 	if (cf) {
 		while((buf = readline())) {
 			if (*buf == 10) /* skip new line */
@@ -1550,46 +1684,94 @@ finish:
 	if (verbose) {
 		printconfig(fd);
 	}
-	if (!fo_real) 
-		exit(0);
 
+	if (dry_run)
+		exit(0);
 	
 	if (debug & DEBUG_APPLY) {
 		printf("About to open Master device\n");
 		fflush(stdout);
 	}
-	for (x=0;x<numdynamic;x++) {
-		/* destroy them all */
-		ioctl(fd, DAHDI_DYNAMIC_DESTROY, &zds[x]);
+
+	sigemptyset(&act.sa_mask);
+	act.sa_handler = signal_handler;
+	act.sa_flags = SA_RESETHAND;
+
+	if (sigaction(SIGTERM, &act, NULL) == -1) {
+		perror("Failed to install SIGTERM handler.");
+		exit(1);
 	}
+	if (sigaction(SIGINT, &act, NULL) == -1) {
+		perror("Failed to install SIGINT handler.");
+		exit(1);
+	}
+
+	lock = sem_open(SEM_NAME, O_CREAT, O_RDWR, 1);
+	if (SEM_FAILED == lock) {
+		perror("Unable to create 'dahdi_cfg' mutex");
+		exit_code = 1;
+		goto release_sem;
+	}
+
+	if (-1 == sem_wait(lock)) {
+		perror("Failed to wait for 'dahdi_cfg' mutex");
+		exit_code = 1;
+		goto unlink_sem;
+	}
+
+	if (!restrict_channels && !only_span) {
+		for (x=0;x<numdynamic;x++) {
+			/* destroy them all */
+			ioctl(fd, DAHDI_DYNAMIC_DESTROY, &zds[x]);
+		}
+	}
+
 	if (stopmode) {
 		for (x=0;x<spans;x++) {
-			if (only_span && x != only_span)
+			if (only_span && lc[x].span != only_span)
 				continue;
 			if (ioctl(fd, DAHDI_SHUTDOWN, &lc[x].span)) {
 				fprintf(stderr, "DAHDI shutdown failed: %s\n", strerror(errno));
 				close(fd);
-				exit(1);
+				exit_code = 1;
+				goto release_sem;
 			}
 		}
-		exit(1);
+		exit_code = 1;
+		goto release_sem;
 	}
 	for (x=0;x<spans;x++) {
-		if (only_span && x != only_span)
+		if (only_span && lc[x].span != only_span)
 			continue;
 		if (ioctl(fd, DAHDI_SPANCONFIG, lc + x)) {
 			fprintf(stderr, "DAHDI_SPANCONFIG failed on span %d: %s (%d)\n", lc[x].span, strerror(errno), errno);
 			close(fd);
-			exit(1);
+			exit_code = 1;
+			goto release_sem;
 		}
 	}
-	for (x=0;x<numdynamic;x++) {
-		if (ioctl(fd, DAHDI_DYNAMIC_CREATE, &zds[x])) {
-			fprintf(stderr, "DAHDI dynamic span creation failed: %s\n", strerror(errno));
-			close(fd);
-			exit(1);
+
+	if (!restrict_channels && !only_span) {
+
+		sem_post(lock);
+
+		for (x=0;x<numdynamic;x++) {
+			if (ioctl(fd, DAHDI_DYNAMIC_CREATE, &zds[x])) {
+				fprintf(stderr, "DAHDI dynamic span creation failed: %s\n", strerror(errno));
+				close(fd);
+				exit_code = 1;
+				goto release_sem;
+			}
+			wait_for_all_spans_assigned(1);
+		}
+
+		if (-1 == sem_wait(lock)) {
+			perror("Failed to wait for 'dahdi_cfg' mutex after creating dynamic spans");
+			exit_code = 1;
+			goto unlink_sem;
 		}
 	}
+
 	for (x=1;x<DAHDI_MAX_CHANNELS;x++) {
 		struct dahdi_params current_state;
 		int master;
@@ -1712,7 +1894,8 @@ finish:
 					" to channel 16 of an E1 CAS span\n");
 			}
 			close(fd);
-			exit(1);
+			exit_code = 1;
+			goto release_sem;
 		}
 
 		ae[x].chan = x;
@@ -1723,7 +1906,8 @@ finish:
 		if (ioctl(fd, DAHDI_ATTACH_ECHOCAN, &ae[x])) {
 			fprintf(stderr, "DAHDI_ATTACH_ECHOCAN failed on channel %d: %s (%d)\n", x, strerror(errno), errno);
 			close(fd);
-			exit(1);
+			exit_code = 1;
+			goto release_sem;
 		}
 	}
 	if (0 == numzones) {
@@ -1750,18 +1934,28 @@ finish:
 		if (ioctl(fd, DAHDI_DEFAULTZONE, &deftonezone)) {
 			fprintf(stderr, "DAHDI_DEFAULTZONE failed: %s (%d)\n", strerror(errno), errno);
 			close(fd);
-			exit(1);
+			exit_code = 1;
+			goto release_sem;
 		}
 	}
 	for (x=0;x<spans;x++) {
-		if (only_span && x != only_span)
+		if (only_span && lc[x].span != only_span)
 			continue;
 		if (ioctl(fd, DAHDI_STARTUP, &lc[x].span)) {
 			fprintf(stderr, "DAHDI startup failed: %s\n", strerror(errno));
 			close(fd);
-			exit(1);
+			exit_code = 1;
+			goto release_sem;
 		}
 	}
-	apply_fiftysix();
-	exit(0);
+	exit_code = apply_fiftysix();
+
+release_sem:
+	if (SEM_FAILED != lock)
+		sem_post(lock);
+
+unlink_sem:
+	if (SEM_FAILED != lock)
+		sem_unlink(SEM_NAME);
+	exit(exit_code);
 }

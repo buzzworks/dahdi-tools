@@ -26,7 +26,7 @@
 #include "astribank_usb.h"
 
 int spi_send(struct astribank_device *astribank, uint16_t addr, uint16_t data, int recv_answer, int ver);
-int load_echo(struct astribank_device *astribank, char *filename, int is_alaw);
+int load_echo(struct astribank_device *astribank, char *filename, int is_alaw, const char *span_spec);
 int echo_ver(struct astribank_device *astribank);
 
 #endif	/* ECHO_LOADER_H */
